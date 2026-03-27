@@ -1,10 +1,24 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("🚀 STRICT Smart Reversal Scanner (High Quality Only)")
+st.title("🚀 Ultra Smart Market Scanner (Strict AI Filter)")
 
+# =========================
+def get_all_products():
+    url = "https://api.exchange.coinbase.com/products"
+    r = requests.get(url).json()
+
+    symbols = []
+    for item in r:
+        if item["quote_currency"] == "USD":
+            symbols.append(item["base_currency"])
+
+    return list(set(symbols))
+
+# =========================
 def get_data(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}-USD/candles"
     r = requests.get(url).json()
@@ -19,7 +33,34 @@ def get_data(symbol):
     return df.head(72).astype(float)
 
 # =========================
-def smart_analyze(df):
+# 🔥 فلتر أقوى (مهم جدًا)
+# =========================
+def smart_filter(df):
+
+    avg_volume = df["volume"].mean()
+    total_volume = df["volume"].sum()
+
+    price_range = df["high"].max() - df["low"].min()
+    avg_price = df["close"].mean()
+
+    volatility = price_range / (avg_price + 1e-9)
+
+    # 🔴 فلتر حجم أقوى
+    if avg_volume < 5000:
+        return False
+
+    # 🔴 لازم حركة حقيقية مش سوق ميت
+    if volatility < 0.03:
+        return False
+
+    # 🔴 منع الشموع الضعيفة
+    if df.iloc[0]["volume"] < avg_volume * 0.8:
+        return False
+
+    return True
+
+# =========================
+def analyze(df):
 
     close = df.iloc[0]["close"]
     open_ = df.iloc[0]["open"]
@@ -29,39 +70,39 @@ def smart_analyze(df):
 
     pressure = (close - low) / (high - low + 1e-9)
 
-    sweep = (df.iloc[0]["low"] <= low) and (close > low)
+    sweep = (df.iloc[0]["low"] <= low)
 
-    volume_now = df.iloc[0]["volume"]
-    volume_avg = df["volume"].mean()
+    volume_confirm = df.iloc[0]["volume"] > df["volume"].mean() * 1.2
 
-    volume_confirm = volume_now > volume_avg * 1.3
+    trend = df["close"].iloc[:10].mean() > df["close"].iloc[20:40].mean()
 
-    trend_down = df.iloc[-1]["close"] < df.iloc[0]["close"]
-
-    momentum = df["close"].head(3).mean() > df["close"].head(10).mean()
+    momentum = close > df["close"].iloc[1:5].mean()
 
     score = 0
 
-    if pressure < 0.20:
+    # 🔥 شروط أقوى
+    if pressure < 0.18:
         score += 35
 
     if sweep:
-        score += 30
+        score += 20
 
     if volume_confirm:
         score += 25
 
-    if trend_down:
-        score += 5
+    if trend:
+        score += 15
 
     if momentum:
-        score += 5
+        score += 10
 
-    # ================= STRICT FILTER
+    # ================= STRICT OUTPUT
     if score >= 85:
-        signal = "🔥 شراء قوي"
+        signal = "🔥 شراء قوي جدًا"
     elif score >= 70:
-        signal = "🟢 شراء"
+        signal = "🟢 شراء قوي"
+    elif score >= 55:
+        signal = "⏳ انتظار"
     else:
         signal = "❌ مرفوض"
 
@@ -70,9 +111,9 @@ def smart_analyze(df):
 # =========================
 results = []
 
-if st.button("🚀 Run STRICT Scan"):
+if st.button("🚀 Scan Full Market"):
 
-    coins = ["BTC","ETH","SOL","XRP","ADA","DOGE","AVAX","MATIC"]
+    coins = get_all_products()
 
     progress = st.progress(0)
 
@@ -83,10 +124,13 @@ if st.button("🚀 Run STRICT Scan"):
         if df is None:
             continue
 
-        signal, score = smart_analyze(df)
+        if not smart_filter(df):
+            continue
 
-        # 🔥 هنا الفلتر الحقيقي
-        if signal != "❌ مرفوض":
+        signal, score = analyze(df)
+
+        # 🔥 نسمح فقط بالقوي جدًا
+        if score >= 75:
 
             results.append({
                 "Symbol": coin,
@@ -98,7 +142,7 @@ if st.button("🚀 Run STRICT Scan"):
         progress.progress((i+1)/len(coins))
 
     if results:
-        st.success("🔥 High Quality Signals Only")
+        st.success("🔥 HIGH QUALITY SETUPS ONLY")
         st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False))
     else:
         st.warning("❌ No strong setups right now")
