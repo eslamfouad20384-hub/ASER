@@ -3,40 +3,48 @@ import requests
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("📊 Daily Candle Builder (From Hourly Data)")
+st.title("📊 AI Daily Candle Builder (Binance Source)")
 
 # =========================
-# جلب شمعة يوم من شمعات الساعة
+# جلب شمعة يوم من 24 شمعة ساعة
 # =========================
 def get_daily_candle(symbol):
-    url = "https://min-api.cryptocompare.com/data/v2/histohour"
+    url = "https://api.binance.com/api/v3/klines"
 
     params = {
-        "fsym": symbol.upper(),
-        "tsym": "USDT",
-        "limit": 24   # 24 ساعة = يوم كامل
+        "symbol": symbol.upper() + "USDT",
+        "interval": "1h",
+        "limit": 24
     }
 
     r = requests.get(url).json()
 
-    # تأمين الرد
-    if r.get("Response") != "Success":
+    # لو في error من Binance
+    if isinstance(r, dict) and r.get("code"):
         return None
 
-    data = r["Data"]["Data"]
+    df = pd.DataFrame(r, columns=[
+        "open_time","open","high","low","close","volume",
+        "close_time","qav","trades","tbb","tbq","ignore"
+    ])
 
-    if not data or len(data) < 24:
-        return None
+    # تحويل أرقام
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
+    df["volume"] = df["volume"].astype(float)
 
-    df = pd.DataFrame(data)
-
+    # =========================
+    # بناء شمعة اليوم
+    # =========================
     candle = {
         "Symbol": symbol.upper(),
         "Open": df.iloc[0]["open"],
         "High": df["high"].max(),
         "Low": df["low"].min(),
         "Close": df.iloc[-1]["close"],
-        "Volume": df["volumeto"].sum()
+        "Volume": df["volume"].sum()
     }
 
     return candle
@@ -55,11 +63,18 @@ if st.button("📈 جلب شمعة اليوم"):
         if data:
             st.success(f"📊 شمعة يوم لـ {data['Symbol']}")
 
-            st.metric("Open", data["Open"])
-            st.metric("High", data["High"])
-            st.metric("Low", data["Low"])
-            st.metric("Close", data["Close"])
-            st.metric("Volume", data["Volume"])
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("Open", data["Open"])
+                st.metric("Low", data["Low"])
+
+            with col2:
+                st.metric("High", data["High"])
+
+            with col3:
+                st.metric("Close", data["Close"])
+                st.metric("Volume", data["Volume"])
 
         else:
             st.error("❌ فشل جلب البيانات أو العملة غير صحيحة")
