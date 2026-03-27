@@ -2,56 +2,64 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.title("📊 Crypto Daily Candle Scanner")
+st.set_page_config(layout="wide")
+st.title("📊 Daily Candle Builder (From Hourly Data)")
 
 # =========================
-# جلب شمعة يوم (Daily Candle)
+# جلب شمعة يوم من شمعات الساعة
 # =========================
-def fetch_daily_candle(symbol):
-    url = "https://min-api.cryptocompare.com/data/v2/histoday"
+def get_daily_candle(symbol):
+    url = "https://min-api.cryptocompare.com/data/v2/histohour"
 
     params = {
         "fsym": symbol.upper(),
         "tsym": "USDT",
-        "limit": 1   # آخر شمعة يوم فقط
+        "limit": 24   # 24 ساعة = يوم كامل
     }
 
     r = requests.get(url).json()
 
-    if "Data" not in r:
+    # تأمين الرد
+    if r.get("Response") != "Success":
         return None
 
     data = r["Data"]["Data"]
+
+    if not data or len(data) < 24:
+        return None
+
     df = pd.DataFrame(data)
 
-    candle = df.iloc[-1]
-
-    return {
-        "symbol": symbol.upper(),
-        "open": candle["open"],
-        "high": candle["high"],
-        "low": candle["low"],
-        "close": candle["close"],
-        "volume": candle["volumeto"]
+    candle = {
+        "Symbol": symbol.upper(),
+        "Open": df.iloc[0]["open"],
+        "High": df["high"].max(),
+        "Low": df["low"].min(),
+        "Close": df.iloc[-1]["close"],
+        "Volume": df["volumeto"].sum()
     }
+
+    return candle
 
 # =========================
 # UI
 # =========================
-symbol = st.text_input("اكتب اسم العملة (مثال BTC, ETH, SOL)")
+symbol = st.text_input("✍️ اكتب اسم العملة (BTC / ETH / SOL)")
 
 if st.button("📈 جلب شمعة اليوم"):
-    if symbol:
-        data = fetch_daily_candle(symbol)
+    if not symbol:
+        st.warning("اكتب اسم العملة الأول")
+    else:
+        data = get_daily_candle(symbol)
 
         if data:
-            st.success(f"📊 شمعة يوم لـ {data['symbol']}")
+            st.success(f"📊 شمعة يوم لـ {data['Symbol']}")
 
-            st.write("Open:", data["open"])
-            st.write("High:", data["high"])
-            st.write("Low:", data["low"])
-            st.write("Close:", data["close"])
-            st.write("Volume:", data["volume"])
+            st.metric("Open", data["Open"])
+            st.metric("High", data["High"])
+            st.metric("Low", data["Low"])
+            st.metric("Close", data["Close"])
+            st.metric("Volume", data["Volume"])
 
         else:
-            st.error("❌ فشل جلب البيانات")
+            st.error("❌ فشل جلب البيانات أو العملة غير صحيحة")
