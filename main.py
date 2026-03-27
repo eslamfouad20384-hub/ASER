@@ -3,10 +3,25 @@ import requests
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🚀 Crypto Recommendation Engine (72H Smart Mode)")
+st.title("🚀 Full Market Smart Scanner (AI Filter)")
 
-COINS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "AVAX", "MATIC"]
+# =========================
+# جلب كل العملات من Coinbase
+# =========================
+def get_all_products():
+    url = "https://api.exchange.coinbase.com/products"
+    r = requests.get(url).json()
 
+    symbols = []
+
+    for item in r:
+        if item["quote_currency"] == "USD":
+            symbols.append(item["base_currency"])
+
+    return list(set(symbols))
+
+# =========================
+# جلب بيانات
 # =========================
 def get_data(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}-USD/candles"
@@ -19,13 +34,29 @@ def get_data(symbol):
         "time","low","high","open","close","volume"
     ])
 
-    # 🔥 هنا التعديل: 72 شمعة بدل 24
-    df = df.head(72).astype(float)
-
-    return df
+    return df.head(72).astype(float)
 
 # =========================
-def recommendation(df):
+# فلترة ذكية قبل التحليل
+# =========================
+def smart_filter(df):
+
+    volume = df["volume"].sum()
+    volatility = (df["high"].max() - df["low"].min()) / df["close"].mean()
+
+    # شروط الفلتر
+    if volume < 1000:
+        return False
+
+    if volatility < 0.02:
+        return False
+
+    return True
+
+# =========================
+# التقييم النهائي
+# =========================
+def analyze(df):
 
     close = df.iloc[0]["close"]
     open_ = df.iloc[0]["open"]
@@ -33,19 +64,12 @@ def recommendation(df):
     high = df["high"].max()
     low = df["low"].min()
 
-    volume = df["volume"].sum()
-
-    # ضغط السعر
     pressure = (close - low) / (high - low + 1e-9)
 
-    # سحب سيولة
     sweep = (df.iloc[0]["low"] <= low) and (close > low)
 
-    # حجم قوي
-    vol_avg = df["volume"].mean()
-    volume_ok = df.iloc[0]["volume"] > vol_avg * 1.2
+    vol_ok = df.iloc[0]["volume"] > df["volume"].mean()
 
-    # اتجاه عام (3 أيام)
     trend_down = df.iloc[-1]["close"] < df.iloc[0]["close"]
 
     score = 0
@@ -54,14 +78,13 @@ def recommendation(df):
         score += 30
     if sweep:
         score += 30
-    if volume_ok:
+    if vol_ok:
         score += 20
     if trend_down:
         score += 10
     if close > open_:
         score += 10
 
-    # =========================
     if score >= 75:
         signal = "🔥 شراء قوي"
     elif score >= 55:
@@ -76,28 +99,38 @@ def recommendation(df):
 # =========================
 results = []
 
-if st.button("🚀 Scan 72H Market"):
+if st.button("🚀 Scan Full Market"):
+
+    coins = get_all_products()
 
     progress = st.progress(0)
 
-    for i, coin in enumerate(COINS):
+    for i, coin in enumerate(coins):
 
         df = get_data(coin)
 
         if df is None:
             continue
 
-        signal, score = recommendation(df)
+        # فلتر ذكي الأول
+        if not smart_filter(df):
+            continue
 
-        results.append({
-            "Symbol": coin,
-            "Recommendation": signal,
-            "Score": score,
-            "Price": df.iloc[0]["close"]
-        })
+        signal, score = analyze(df)
 
-        progress.progress((i+1)/len(COINS))
+        if signal in ["🔥 شراء قوي", "🟢 شراء"]:
 
-    st.success("🔥 Done (72H Analysis)")
+            results.append({
+                "Symbol": coin,
+                "Signal": signal,
+                "Score": score,
+                "Price": df.iloc[0]["close"]
+            })
 
-    st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False))
+        progress.progress((i+1)/len(coins))
+
+    if results:
+        st.success("🔥 Smart Opportunities Found")
+        st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False))
+    else:
+        st.warning("❌ No strong setups")
