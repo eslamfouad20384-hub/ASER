@@ -3,12 +3,12 @@ import requests
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🚀 Crypto Reversal Scanner (Pressure + Bounce)")
+st.title("🚀 Crypto Recommendation Engine (BUY / WAIT / REJECT)")
 
 COINS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "AVAX", "MATIC"]
 
 # =========================
-def get_24h(symbol):
+def get_data(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}-USD/candles"
     r = requests.get(url).json()
 
@@ -19,78 +19,83 @@ def get_24h(symbol):
         "time","low","high","open","close","volume"
     ])
 
-    df = df.head(24).astype(float)
-    return df
+    return df.head(24).astype(float)
 
 # =========================
-def detect_reversal(df):
-    current_price = df.iloc[0]["close"]
+def recommendation(df):
 
-    high_24 = df["high"].max()
-    low_24 = df["low"].min()
+    close = df.iloc[0]["close"]
+    open_ = df.iloc[0]["open"]
 
-    # 1) ضغط (قريب من القاع)
-    near_bottom = (current_price - low_24) / (high_24 - low_24 + 1e-9)
+    high = df["high"].max()
+    low = df["low"].min()
 
-    # 2) ضغط بيع (عدد الشموع الحمراء)
-    red_candles = (df["close"] < df["open"]).sum()
+    volume = df["volume"].sum()
 
-    # 3) شمعة ارتداد
-    last_green = df.iloc[0]["close"] > df.iloc[0]["open"]
+    # ضغط السعر
+    pressure = (close - low) / (high - low + 1e-9)
 
-    # 4) ذيل سفلي (رفض قاع)
-    last_wick = (df.iloc[0]["open"] - df.iloc[0]["low"]) > (df.iloc[0]["high"] - df.iloc[0]["close"])
+    # سحب سيولة
+    sweep = (df.iloc[0]["low"] <= low) and (close > low)
+
+    # حجم قوي
+    vol_avg = df["volume"].mean()
+    volume_ok = df.iloc[0]["volume"] > vol_avg * 1.2
+
+    # اتجاه
+    trend_down = df.iloc[-1]["close"] < df.iloc[0]["close"]
 
     score = 0
 
-    # ضغط هبوط
-    if near_bottom < 0.25:
-        score += 40
-
-    # ضغط بيع
-    if red_candles >= 15:
+    if pressure < 0.25:
         score += 30
-
-    # بداية ارتداد
-    if last_green:
+    if sweep:
+        score += 30
+    if volume_ok:
         score += 20
-
-    # رفض قاع
-    if last_wick:
+    if trend_down:
+        score += 10
+    if close > open_:
         score += 10
 
-    return score, near_bottom, red_candles
+    # =========================
+    # القرار النهائي
+    if score >= 75:
+        signal = "🔥 شراء قوي"
+    elif score >= 55:
+        signal = "🟢 شراء"
+    elif score >= 35:
+        signal = "⏳ انتظار"
+    else:
+        signal = "❌ مرفوض"
+
+    return signal, score
 
 # =========================
 results = []
 
-if st.button("🚀 Scan Reversal Opportunities"):
+if st.button("🚀 Run Recommendation Scan"):
 
     progress = st.progress(0)
 
     for i, coin in enumerate(COINS):
 
-        df = get_24h(coin)
+        df = get_data(coin)
 
         if df is None:
             continue
 
-        score, near_bottom, reds = detect_reversal(df)
+        signal, score = recommendation(df)
 
-        if score >= 60:   # فلتر قوي للإشارات
-            results.append({
-                "Symbol": coin,
-                "Score": score,
-                "Pressure_Level": round(near_bottom, 2),
-                "Red_Candles": reds,
-                "Current_Close": df.iloc[0]["close"]
-            })
+        results.append({
+            "Symbol": coin,
+            "Recommendation": signal,
+            "Score": score,
+            "Price": df.iloc[0]["close"]
+        })
 
         progress.progress((i+1)/len(COINS))
 
-    if results:
-        df_res = pd.DataFrame(results).sort_values("Score", ascending=False)
-        st.success("🔥 Potential Reversal Coins Found")
-        st.dataframe(df_res)
-    else:
-        st.warning("❌ مفيش فرص ارتداد قوية حالياً")
+    st.success("🔥 Done")
+
+    st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False))
