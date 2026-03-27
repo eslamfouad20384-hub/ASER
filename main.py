@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🚀 Crypto Recommendation Engine (BUY / WAIT / REJECT)")
+st.title("🚀 Crypto Recommendation Engine (72H Smart Mode)")
 
 COINS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "AVAX", "MATIC"]
 
@@ -12,14 +12,17 @@ def get_data(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}-USD/candles"
     r = requests.get(url).json()
 
-    if not isinstance(r, list) or len(r) < 24:
+    if not isinstance(r, list) or len(r) < 72:
         return None
 
     df = pd.DataFrame(r, columns=[
         "time","low","high","open","close","volume"
     ])
 
-    return df.head(24).astype(float)
+    # 🔥 هنا التعديل: 72 شمعة بدل 24
+    df = df.head(72).astype(float)
+
+    return df
 
 # =========================
 def recommendation(df):
@@ -42,7 +45,7 @@ def recommendation(df):
     vol_avg = df["volume"].mean()
     volume_ok = df.iloc[0]["volume"] > vol_avg * 1.2
 
-    # اتجاه
+    # اتجاه عام (3 أيام)
     trend_down = df.iloc[-1]["close"] < df.iloc[0]["close"]
 
     score = 0
@@ -59,7 +62,6 @@ def recommendation(df):
         score += 10
 
     # =========================
-    # القرار النهائي
     if score >= 75:
         signal = "🔥 شراء قوي"
     elif score >= 55:
@@ -74,7 +76,7 @@ def recommendation(df):
 # =========================
 results = []
 
-if st.button("🚀 Run Recommendation Scan"):
+if st.button("🚀 Scan 72H Market"):
 
     progress = st.progress(0)
 
@@ -96,6 +98,6 @@ if st.button("🚀 Run Recommendation Scan"):
 
         progress.progress((i+1)/len(COINS))
 
-    st.success("🔥 Done")
+    st.success("🔥 Done (72H Analysis)")
 
     st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False))
