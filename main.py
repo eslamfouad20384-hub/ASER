@@ -3,22 +3,34 @@ import requests
 import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("📊 Manual Coin Analyzer (No Auto Search)")
+st.title("📊 Manual Crypto Analyzer (Fixed & Safe)")
 
 # =========================
-# إدخال يدوي للعملة
+# تصليح اسم العملة تلقائي
 # =========================
-coin = st.text_input("✍️ اكتب اسم العملة (مثال: BTCUSDT)")
+def fix_symbol(name):
+    name = name.upper().strip()
+
+    # لو كتب BTC أو ETH فقط
+    if name in ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "LTC"]:
+        return name + "USDT"
+
+    # لو بالفعل USDT موجود
+    if "USDT" in name:
+        return name
+
+    # افتراضي
+    return name + "USDT"
 
 # =========================
-# جلب الشموع اليومية
+# جلب الشموع
 # =========================
 def get_candles(symbol):
     url = "https://api.binance.com/api/v3/klines"
 
     try:
         params = {
-            "symbol": symbol.upper(),
+            "symbol": symbol,
             "interval": "1d",
             "limit": 60
         }
@@ -26,8 +38,12 @@ def get_candles(symbol):
         res = requests.get(url, params=params, timeout=10)
         data = res.json()
 
+        # لو API رجع Error
+        if isinstance(data, dict):
+            return None, f"❌ API Error: {data.get('msg', 'Unknown error')}"
+
         if not isinstance(data, list):
-            return None
+            return None, "❌ Invalid response from API"
 
         candles = []
 
@@ -40,10 +56,10 @@ def get_candles(symbol):
                 "volume": float(c[5])
             })
 
-        return candles
+        return candles, "✅ Success"
 
-    except:
-        return None
+    except Exception as e:
+        return None, f"❌ Request Error: {e}"
 
 # =========================
 # RSI
@@ -85,18 +101,26 @@ def get_signal(change, rsi_val):
         return "⚪ NO TRADE"
 
 # =========================
-# تشغيل التحليل
+# UI
 # =========================
+coin = st.text_input("✍️ اكتب العملة (BTC / ETH / BTCUSDT)")
+
 if st.button("🚀 Analyze"):
 
     if not coin:
-        st.error("✍️ اكتب اسم العملة الأول")
+        st.error("✍️ لازم تكتب عملة")
         st.stop()
 
-    candles = get_candles(coin)
+    symbol = fix_symbol(coin)
+
+    st.write("🔎 Symbol:", symbol)
+
+    candles, status = get_candles(symbol)
+
+    st.write("Status:", status)
 
     if not candles:
-        st.error("❌ Invalid coin or API error")
+        st.error("❌ Failed to load candles")
         st.stop()
 
     closes = [c["close"] for c in candles]
@@ -110,9 +134,12 @@ if st.button("🚀 Analyze"):
 
     signal = get_signal(change, rsi_val)
 
+    # =========================
+    # النتائج
+    # =========================
     st.subheader("📊 RESULT")
 
-    st.write("عملة:", coin.upper())
+    st.write("عملة:", symbol)
     st.write("RSI:", rsi_val)
     st.write("Daily Change %:", change)
     st.write("Signal:", signal)
