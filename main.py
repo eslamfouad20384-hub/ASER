@@ -2,56 +2,95 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.title("📊 Daily Candle Builder (Coinbase Source)")
+st.set_page_config(layout="wide")
+st.title("🚀 Crypto Reversal Scanner (Pressure + Bounce)")
+
+COINS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "AVAX", "MATIC"]
 
 # =========================
-# جلب بيانات ساعة وتحويلها ليوم
-# =========================
-def get_daily_candle(symbol):
-    url = f"https://api.exchange.coinbase.com/products/{symbol.upper()}-USDT/candles"
-
-    params = {
-        "granularity": 3600  # 1 hour
-    }
-
+def get_24h(symbol):
+    url = f"https://api.exchange.coinbase.com/products/{symbol}-USD/candles"
     r = requests.get(url).json()
 
-    # لو الرد مش list
-    if not isinstance(r, list):
+    if not isinstance(r, list) or len(r) < 24:
         return None
 
-    # Coinbase بيرجع آخر الشموع بالعكس
     df = pd.DataFrame(r, columns=[
         "time","low","high","open","close","volume"
     ])
 
-    if len(df) < 24:
-        return None
-
-    # ناخد آخر 24 ساعة ونرتبهم
-    df = df.head(24)
-
-    df = df.astype(float)
-
-    candle = {
-        "Symbol": symbol.upper(),
-        "Open": df.iloc[-1]["open"],
-        "High": df["high"].max(),
-        "Low": df["low"].min(),
-        "Close": df.iloc[0]["close"],
-        "Volume": df["volume"].sum()
-    }
-
-    return candle
+    df = df.head(24).astype(float)
+    return df
 
 # =========================
-symbol = st.text_input("اكتب العملة (BTC / ETH / SOL)")
+def detect_reversal(df):
+    current_price = df.iloc[0]["close"]
 
-if st.button("جلب شمعة اليوم"):
-    data = get_daily_candle(symbol)
+    high_24 = df["high"].max()
+    low_24 = df["low"].min()
 
-    if data:
-        st.success("تم جلب شمعة اليوم")
-        st.write(data)
+    # 1) ضغط (قريب من القاع)
+    near_bottom = (current_price - low_24) / (high_24 - low_24 + 1e-9)
+
+    # 2) ضغط بيع (عدد الشموع الحمراء)
+    red_candles = (df["close"] < df["open"]).sum()
+
+    # 3) شمعة ارتداد
+    last_green = df.iloc[0]["close"] > df.iloc[0]["open"]
+
+    # 4) ذيل سفلي (رفض قاع)
+    last_wick = (df.iloc[0]["open"] - df.iloc[0]["low"]) > (df.iloc[0]["high"] - df.iloc[0]["close"])
+
+    score = 0
+
+    # ضغط هبوط
+    if near_bottom < 0.25:
+        score += 40
+
+    # ضغط بيع
+    if red_candles >= 15:
+        score += 30
+
+    # بداية ارتداد
+    if last_green:
+        score += 20
+
+    # رفض قاع
+    if last_wick:
+        score += 10
+
+    return score, near_bottom, red_candles
+
+# =========================
+results = []
+
+if st.button("🚀 Scan Reversal Opportunities"):
+
+    progress = st.progress(0)
+
+    for i, coin in enumerate(COINS):
+
+        df = get_24h(coin)
+
+        if df is None:
+            continue
+
+        score, near_bottom, reds = detect_reversal(df)
+
+        if score >= 60:   # فلتر قوي للإشارات
+            results.append({
+                "Symbol": coin,
+                "Score": score,
+                "Pressure_Level": round(near_bottom, 2),
+                "Red_Candles": reds,
+                "Current_Close": df.iloc[0]["close"]
+            })
+
+        progress.progress((i+1)/len(COINS))
+
+    if results:
+        df_res = pd.DataFrame(results).sort_values("Score", ascending=False)
+        st.success("🔥 Potential Reversal Coins Found")
+        st.dataframe(df_res)
     else:
-        st.error("❌ مفيش بيانات أو العملة غير صحيحة")
+        st.warning("❌ مفيش فرص ارتداد قوية حالياً")
