@@ -1,128 +1,57 @@
 import streamlit as st
 import requests
 import pandas as pd
-import numpy as np
 
-st.set_page_config(layout="wide")
-st.title("📊 Real Daily Candles OHLCV (No Binance)")
+st.title("📊 Crypto Daily Candle Scanner")
 
 # =========================
-# تحويل الاسم
+# جلب شمعة يوم (Daily Candle)
 # =========================
-def coin_to_id(name):
-    name = name.lower().strip()
-
-    mapping = {
-        "btc": "bitcoin",
-        "eth": "ethereum",
-        "bnb": "binancecoin",
-        "sol": "solana",
-        "xrp": "ripple",
-        "ada": "cardano",
-        "doge": "dogecoin",
-        "ltc": "litecoin"
-    }
-
-    return mapping.get(name, name)
-
-# =========================
-# جلب بيانات دقيقة
-# =========================
-def get_data(coin_id):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+def fetch_daily_candle(symbol):
+    url = "https://min-api.cryptocompare.com/data/v2/histoday"
 
     params = {
-        "vs_currency": "usd",
-        "days": 30,
-        "interval": "hourly"
+        "fsym": symbol.upper(),
+        "tsym": "USDT",
+        "limit": 1   # آخر شمعة يوم فقط
     }
 
-    try:
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
+    r = requests.get(url).json()
 
-        if "prices" not in data:
-            return None, None
-
-        prices = data["prices"]
-        volumes = data["total_volumes"]
-
-        df = pd.DataFrame(prices, columns=["timestamp", "price"])
-        df["volume"] = [v[1] for v in volumes]
-
-        df["date"] = pd.to_datetime(df["timestamp"], unit="ms").dt.date
-
-        candles = []
-
-        for d, group in df.groupby("date"):
-            open_p = group["price"].iloc[0]
-            close_p = group["price"].iloc[-1]
-            high_p = group["price"].max()
-            low_p = group["price"].min()
-            vol = group["volume"].sum()
-
-            candles.append({
-                "date": d,
-                "open": open_p,
-                "high": high_p,
-                "low": low_p,
-                "close": close_p,
-                "volume": vol
-            })
-
-        return candles, "✅ Success"
-
-    except Exception as e:
-        return None, f"❌ Error: {e}"
-
-# =========================
-# RSI
-# =========================
-def rsi(values, period=14):
-    values = np.array(values)
-
-    if len(values) < period + 1:
+    if "Data" not in r:
         return None
 
-    diff = np.diff(values)
+    data = r["Data"]["Data"]
+    df = pd.DataFrame(data)
 
-    gain = np.where(diff > 0, diff, 0)
-    loss = np.where(diff < 0, -diff, 0)
+    candle = df.iloc[-1]
 
-    avg_gain = np.mean(gain[-period:])
-    avg_loss = np.mean(loss[-period:])
-
-    if avg_loss == 0:
-        return 100
-
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    return {
+        "symbol": symbol.upper(),
+        "open": candle["open"],
+        "high": candle["high"],
+        "low": candle["low"],
+        "close": candle["close"],
+        "volume": candle["volumeto"]
+    }
 
 # =========================
 # UI
 # =========================
-coin = st.text_input("✍️ اكتب العملة (BTC / ETH / SOL)")
+symbol = st.text_input("اكتب اسم العملة (مثال BTC, ETH, SOL)")
 
-if st.button("🚀 Generate Candles"):
+if st.button("📈 جلب شمعة اليوم"):
+    if symbol:
+        data = fetch_daily_candle(symbol)
 
-    coin_id = coin_to_id(coin)
+        if data:
+            st.success(f"📊 شمعة يوم لـ {data['symbol']}")
 
-    candles, status = get_data(coin_id)
+            st.write("Open:", data["open"])
+            st.write("High:", data["high"])
+            st.write("Low:", data["low"])
+            st.write("Close:", data["close"])
+            st.write("Volume:", data["volume"])
 
-    st.write("Status:", status)
-
-    if not candles:
-        st.error("❌ No data")
-        st.stop()
-
-    df = pd.DataFrame(candles)
-
-    st.subheader("📊 Daily OHLCV Candles")
-    st.dataframe(df)
-
-    # RSI
-    rsi_val = rsi(df["close"].values)
-
-    st.subheader("📈 Analysis")
-    st.write("RSI:", rsi_val)
-    st.write("Last Close:", df["close"].iloc[-1])
+        else:
+            st.error("❌ فشل جلب البيانات")
