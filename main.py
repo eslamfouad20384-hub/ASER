@@ -3,101 +3,79 @@ import requests
 import json
 import os
 import numpy as np
-import pandas as pd
 
-# =========================
-# إعداد الصفحة
-# =========================
 st.set_page_config(layout="wide")
-st.title("🚀 Crypto Rebound Scanner PRO")
+st.title("📊 Full Crypto Analyzer (All Coins + Daily Data)")
 
-DATA_FILE = "coin_data.json"
-
-# =========================
-# جلب البيانات
-# =========================
-def fetch_coins():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "market_cap_desc",
-            "per_page": 100,
-            "page": 1,
-            "sparkline": False
-        }
-
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-
-        if not isinstance(data, list):
-            return []
-
-        return data
-
-    except:
-        return []
+DATA_FILE = "crypto_data.json"
 
 # =========================
-# تحميل JSON
+# جلب كل العملات USDT
 # =========================
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+@st.cache_data
+def get_all_symbols():
+    url = "https://api.binance.com/api/v3/exchangeInfo"
+    data = requests.get(url).json()
+
+    symbols = []
+
+    for s in data["symbols"]:
+        if s["status"] == "TRADING" and s["quoteAsset"] == "USDT":
+            symbols.append(s["symbol"])
+
+    return sorted(symbols)
+
+coins = get_all_symbols()
 
 # =========================
-# حفظ JSON
+# اختيار العملة
 # =========================
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+coin = st.selectbox("📊 اختار العملة", coins)
 
 # =========================
-# تحديث البيانات
+# جلب الشموع اليومية
 # =========================
-def update_data(coins, old_data):
+def get_candles(symbol):
+    url = "https://api.binance.com/api/v3/klines"
 
-    if not isinstance(coins, list):
-        return old_data
+    params = {
+        "symbol": symbol,
+        "interval": "1d",
+        "limit": 60
+    }
 
-    for c in coins:
+    res = requests.get(url, params=params)
+    data = res.json()
 
-        if not isinstance(c, dict):
-            continue
+    if not isinstance(data, list):
+        return None, "❌ API Error"
 
-        symbol = c.get("symbol")
-        if not symbol:
-            continue
+    candles = []
 
-        coin = symbol.upper()
-
-        if coin not in old_data:
-            old_data[coin] = []
-
-        old_data[coin].append({
-            "price": c.get("current_price", 0),
-            "volume": c.get("total_volume", 0),
-            "change": c.get("price_change_percentage_24h", 0)
+    for c in data:
+        candles.append({
+            "open": float(c[1]),
+            "high": float(c[2]),
+            "low": float(c[3]),
+            "close": float(c[4]),
+            "volume": float(c[5])
         })
 
-        old_data[coin] = old_data[coin][-60:]
-
-    return old_data
+    return candles, "✅ Success"
 
 # =========================
 # RSI
 # =========================
-def calc_rsi(prices, period=14):
+def calc_rsi(closes, period=14):
+    prices = np.array(closes)
+
     if len(prices) < period + 1:
-        return 50
+        return None
 
-    prices = np.array(prices)
-    deltas = np.diff(prices)
+    diff = np.diff(prices)
 
-    gain = np.where(deltas > 0, deltas, 0)
-    loss = np.where(deltas < 0, -deltas, 0)
+    gain = np.where(diff > 0, diff, 0)
+    loss = np.where(diff < 0, -diff, 0)
 
     avg_gain = np.mean(gain[-period:])
     avg_loss = np.mean(loss[-period:])
@@ -109,12 +87,15 @@ def calc_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 # =========================
-# Signal
+# الإشارة
 # =========================
 def get_signal(change, rsi):
-    if change <= -5 and rsi < 30:
+    if rsi is None:
+        return "❌ NO DATA"
+
+    if change < -5 and rsi < 30:
         return "🟢 STRONG BUY"
-    elif change <= -3 and rsi < 40:
+    elif change < -3:
         return "🟢 BUY"
     elif rsi < 50:
         return "🟡 WAIT"
@@ -122,89 +103,58 @@ def get_signal(change, rsi):
         return "⚪ NO TRADE"
 
 # =========================
-# تشغيل النظام
+# تشغيل التحليل
 # =========================
-coins = fetch_coins()
-data = load_data()
-data = update_data(coins, data)
-save_data(data)
+if st.button("🚀 Analyze"):
 
-# =========================
-# الجدول الرئيسي
-# =========================
-rows = []
+    candles, status = get_candles(coin)
 
-for c in coins:
-    symbol = c.get("symbol", "").upper()
-    history = data.get(symbol, [])
+    st.write("Status:", status)
 
-    prices = [x["price"] for x in history]
+    if candles:
 
-    rsi = calc_rsi(prices)
-    change = c.get("price_change_percentage_24h", 0)
+        closes = [c["close"] for c in candles]
 
-    signal = get_signal(change, rsi)
+        rsi_val = calc_rsi(closes)
 
-    rows.append([
-        symbol,
-        c.get("current_price", 0),
-        c.get("total_volume", 0),
-        round(rsi, 2),
-        signal
-    ])
+        last = candles[-1]
+        prev = candles[-2]
 
-df = pd.DataFrame(rows, columns=["Coin", "Price", "Volume", "RSI", "Signal"])
+        change = ((last["close"] - prev["close"]) / prev["close"]) * 100
 
-order = {
-    "🟢 STRONG BUY": 0,
-    "🟢 BUY": 1,
-    "🟡 WAIT": 2,
-    "⚪ NO TRADE": 3
-}
+        signal = get_signal(change, rsi_val)
 
-df["sort"] = df["Signal"].map(order)
-df = df.sort_values("sort").drop(columns=["sort"])
+        # نجاح / فشل
+        success = "✅ SUCCESS"
 
-st.subheader("📊 Market Scanner")
-st.dataframe(df, use_container_width=True)
+        # حفظ البيانات
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+        else:
+            data = {}
 
-# =========================
-# 🔍 DEBUG TOOL
-# =========================
-st.divider()
-st.subheader("🔍 Debug Single Coin Tool")
-
-coin_input = st.text_input("Enter coin name (bitcoin, ethereum, solana):")
-
-if st.button("Load Coin"):
-    if coin_input:
-
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "ids": coin_input.lower(),
-            "order": "market_cap_desc",
-            "per_page": 1,
-            "page": 1,
-            "sparkline": False
+        data[coin] = {
+            "rsi": rsi_val,
+            "change": change,
+            "signal": signal,
+            "candles_count": len(candles),
+            "status": success
         }
 
-        res = requests.get(url, params=params)
-        data_debug = res.json()
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=2)
 
-        st.write("Raw API Response:")
-        st.json(data_debug)
+        # عرض النتائج
+        st.subheader("📊 RESULT")
 
-        if isinstance(data_debug, list) and len(data_debug) > 0:
-            c = data_debug[0]
+        st.write("عملة:", coin)
+        st.write("RSI:", rsi_val)
+        st.write("Daily Change %:", change)
+        st.write("Signal:", signal)
+        st.write("Status:", success)
 
-            st.success("Coin loaded")
+        st.success("💾 Data saved successfully")
 
-            st.write({
-                "symbol": c.get("symbol"),
-                "price": c.get("current_price"),
-                "volume": c.get("total_volume"),
-                "change": c.get("price_change_percentage_24h")
-            })
-        else:
-            st.error("No data found")
+    else:
+        st.error("❌ Failed to fetch data")
