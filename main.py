@@ -1,31 +1,46 @@
 import streamlit as st
 import requests
-import json
-import os
 import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("📊 Full Crypto Analyzer (All Coins + Daily Data)")
-
-DATA_FILE = "crypto_data.json"
+st.title("📊 Crypto Analyzer PRO (Safe Version)")
 
 # =========================
-# جلب كل العملات USDT
+# جلب كل العملات USDT (آمن 100%)
 # =========================
 @st.cache_data
 def get_all_symbols():
     url = "https://api.binance.com/api/v3/exchangeInfo"
-    data = requests.get(url).json()
 
-    symbols = []
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
 
-    for s in data["symbols"]:
-        if s["status"] == "TRADING" and s["quoteAsset"] == "USDT":
-            symbols.append(s["symbol"])
+        # حماية كاملة
+        if not isinstance(data, dict) or "symbols" not in data:
+            st.error("⚠️ API returned invalid data")
+            return []
 
-    return sorted(symbols)
+        symbols = []
 
+        for s in data["symbols"]:
+            if (
+                s.get("status") == "TRADING"
+                and s.get("quoteAsset") == "USDT"
+            ):
+                symbols.append(s["symbol"])
+
+        return sorted(symbols)
+
+    except Exception as e:
+        st.error(f"❌ API Error: {e}")
+        return []
+
+# تحميل العملات
 coins = get_all_symbols()
+
+if not coins:
+    st.stop()
 
 # =========================
 # اختيار العملة
@@ -38,41 +53,45 @@ coin = st.selectbox("📊 اختار العملة", coins)
 def get_candles(symbol):
     url = "https://api.binance.com/api/v3/klines"
 
-    params = {
-        "symbol": symbol,
-        "interval": "1d",
-        "limit": 60
-    }
+    try:
+        params = {
+            "symbol": symbol,
+            "interval": "1d",
+            "limit": 60
+        }
 
-    res = requests.get(url, params=params)
-    data = res.json()
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
 
-    if not isinstance(data, list):
-        return None, "❌ API Error"
+        if not isinstance(data, list):
+            return None
 
-    candles = []
+        candles = []
 
-    for c in data:
-        candles.append({
-            "open": float(c[1]),
-            "high": float(c[2]),
-            "low": float(c[3]),
-            "close": float(c[4]),
-            "volume": float(c[5])
-        })
+        for c in data:
+            candles.append({
+                "open": float(c[1]),
+                "high": float(c[2]),
+                "low": float(c[3]),
+                "close": float(c[4]),
+                "volume": float(c[5])
+            })
 
-    return candles, "✅ Success"
+        return candles
+
+    except:
+        return None
 
 # =========================
 # RSI
 # =========================
-def calc_rsi(closes, period=14):
-    prices = np.array(closes)
+def rsi(values, period=14):
+    values = np.array(values)
 
-    if len(prices) < period + 1:
+    if len(values) < period + 1:
         return None
 
-    diff = np.diff(prices)
+    diff = np.diff(values)
 
     gain = np.where(diff > 0, diff, 0)
     loss = np.where(diff < 0, -diff, 0)
@@ -87,17 +106,17 @@ def calc_rsi(closes, period=14):
     return 100 - (100 / (1 + rs))
 
 # =========================
-# الإشارة
+# Signal
 # =========================
-def get_signal(change, rsi):
-    if rsi is None:
+def get_signal(change, rsi_val):
+    if rsi_val is None:
         return "❌ NO DATA"
 
-    if change < -5 and rsi < 30:
+    if change < -5 and rsi_val < 30:
         return "🟢 STRONG BUY"
     elif change < -3:
         return "🟢 BUY"
-    elif rsi < 50:
+    elif rsi_val < 50:
         return "🟡 WAIT"
     else:
         return "⚪ NO TRADE"
@@ -107,54 +126,34 @@ def get_signal(change, rsi):
 # =========================
 if st.button("🚀 Analyze"):
 
-    candles, status = get_candles(coin)
+    candles = get_candles(coin)
 
-    st.write("Status:", status)
+    if not candles:
+        st.error("❌ Failed to fetch candles")
+        st.stop()
 
-    if candles:
+    closes = [c["close"] for c in candles]
 
-        closes = [c["close"] for c in candles]
+    rsi_val = rsi(closes)
 
-        rsi_val = calc_rsi(closes)
+    last = candles[-1]
+    prev = candles[-2]
 
-        last = candles[-1]
-        prev = candles[-2]
+    change = ((last["close"] - prev["close"]) / prev["close"]) * 100
 
-        change = ((last["close"] - prev["close"]) / prev["close"]) * 100
+    signal = get_signal(change, rsi_val)
 
-        signal = get_signal(change, rsi_val)
+    # =========================
+    # عرض النتائج
+    # =========================
+    st.subheader("📊 RESULT")
 
-        # نجاح / فشل
-        success = "✅ SUCCESS"
+    st.write("عملة:", coin)
+    st.write("RSI:", rsi_val)
+    st.write("Daily Change %:", change)
+    st.write("Signal:", signal)
 
-        # حفظ البيانات
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                data = json.load(f)
-        else:
-            data = {}
-
-        data[coin] = {
-            "rsi": rsi_val,
-            "change": change,
-            "signal": signal,
-            "candles_count": len(candles),
-            "status": success
-        }
-
-        with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-
-        # عرض النتائج
-        st.subheader("📊 RESULT")
-
-        st.write("عملة:", coin)
-        st.write("RSI:", rsi_val)
-        st.write("Daily Change %:", change)
-        st.write("Signal:", signal)
-        st.write("Status:", success)
-
-        st.success("💾 Data saved successfully")
-
+    if signal == "❌ NO DATA":
+        st.error("❌ Fail")
     else:
-        st.error("❌ Failed to fetch data")
+        st.success("✅ Success")
