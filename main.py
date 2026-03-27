@@ -3,49 +3,12 @@ import requests
 import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("📊 Crypto Analyzer PRO (Safe Version)")
+st.title("📊 Manual Coin Analyzer (No Auto Search)")
 
 # =========================
-# جلب كل العملات USDT (آمن 100%)
+# إدخال يدوي للعملة
 # =========================
-@st.cache_data
-def get_all_symbols():
-    url = "https://api.binance.com/api/v3/exchangeInfo"
-
-    try:
-        res = requests.get(url, timeout=10)
-        data = res.json()
-
-        # حماية كاملة
-        if not isinstance(data, dict) or "symbols" not in data:
-            st.error("⚠️ API returned invalid data")
-            return []
-
-        symbols = []
-
-        for s in data["symbols"]:
-            if (
-                s.get("status") == "TRADING"
-                and s.get("quoteAsset") == "USDT"
-            ):
-                symbols.append(s["symbol"])
-
-        return sorted(symbols)
-
-    except Exception as e:
-        st.error(f"❌ API Error: {e}")
-        return []
-
-# تحميل العملات
-coins = get_all_symbols()
-
-if not coins:
-    st.stop()
-
-# =========================
-# اختيار العملة
-# =========================
-coin = st.selectbox("📊 اختار العملة", coins)
+coin = st.text_input("✍️ اكتب اسم العملة (مثال: BTCUSDT)")
 
 # =========================
 # جلب الشموع اليومية
@@ -55,7 +18,7 @@ def get_candles(symbol):
 
     try:
         params = {
-            "symbol": symbol,
+            "symbol": symbol.upper(),
             "interval": "1d",
             "limit": 60
         }
@@ -126,10 +89,14 @@ def get_signal(change, rsi_val):
 # =========================
 if st.button("🚀 Analyze"):
 
+    if not coin:
+        st.error("✍️ اكتب اسم العملة الأول")
+        st.stop()
+
     candles = get_candles(coin)
 
     if not candles:
-        st.error("❌ Failed to fetch candles")
+        st.error("❌ Invalid coin or API error")
         st.stop()
 
     closes = [c["close"] for c in candles]
@@ -143,17 +110,11 @@ if st.button("🚀 Analyze"):
 
     signal = get_signal(change, rsi_val)
 
-    # =========================
-    # عرض النتائج
-    # =========================
     st.subheader("📊 RESULT")
 
-    st.write("عملة:", coin)
+    st.write("عملة:", coin.upper())
     st.write("RSI:", rsi_val)
     st.write("Daily Change %:", change)
     st.write("Signal:", signal)
 
-    if signal == "❌ NO DATA":
-        st.error("❌ Fail")
-    else:
-        st.success("✅ Success")
+    st.success("✅ Done")
