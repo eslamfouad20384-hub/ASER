@@ -1,65 +1,79 @@
 import streamlit as st
 import requests
+import pandas as pd
 import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("📊 Manual Crypto Analyzer (Fixed & Safe)")
+st.title("📊 Real Daily Candles OHLCV (No Binance)")
 
 # =========================
-# تصليح اسم العملة تلقائي
+# تحويل الاسم
 # =========================
-def fix_symbol(name):
-    name = name.upper().strip()
+def coin_to_id(name):
+    name = name.lower().strip()
 
-    # لو كتب BTC أو ETH فقط
-    if name in ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE", "ADA", "LTC"]:
-        return name + "USDT"
+    mapping = {
+        "btc": "bitcoin",
+        "eth": "ethereum",
+        "bnb": "binancecoin",
+        "sol": "solana",
+        "xrp": "ripple",
+        "ada": "cardano",
+        "doge": "dogecoin",
+        "ltc": "litecoin"
+    }
 
-    # لو بالفعل USDT موجود
-    if "USDT" in name:
-        return name
-
-    # افتراضي
-    return name + "USDT"
+    return mapping.get(name, name)
 
 # =========================
-# جلب الشموع
+# جلب بيانات دقيقة
 # =========================
-def get_candles(symbol):
-    url = "https://api.binance.com/api/v3/klines"
+def get_data(coin_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+
+    params = {
+        "vs_currency": "usd",
+        "days": 30,
+        "interval": "hourly"
+    }
 
     try:
-        params = {
-            "symbol": symbol,
-            "interval": "1d",
-            "limit": 60
-        }
-
         res = requests.get(url, params=params, timeout=10)
         data = res.json()
 
-        # لو API رجع Error
-        if isinstance(data, dict):
-            return None, f"❌ API Error: {data.get('msg', 'Unknown error')}"
+        if "prices" not in data:
+            return None, None
 
-        if not isinstance(data, list):
-            return None, "❌ Invalid response from API"
+        prices = data["prices"]
+        volumes = data["total_volumes"]
+
+        df = pd.DataFrame(prices, columns=["timestamp", "price"])
+        df["volume"] = [v[1] for v in volumes]
+
+        df["date"] = pd.to_datetime(df["timestamp"], unit="ms").dt.date
 
         candles = []
 
-        for c in data:
+        for d, group in df.groupby("date"):
+            open_p = group["price"].iloc[0]
+            close_p = group["price"].iloc[-1]
+            high_p = group["price"].max()
+            low_p = group["price"].min()
+            vol = group["volume"].sum()
+
             candles.append({
-                "open": float(c[1]),
-                "high": float(c[2]),
-                "low": float(c[3]),
-                "close": float(c[4]),
-                "volume": float(c[5])
+                "date": d,
+                "open": open_p,
+                "high": high_p,
+                "low": low_p,
+                "close": close_p,
+                "volume": vol
             })
 
         return candles, "✅ Success"
 
     except Exception as e:
-        return None, f"❌ Request Error: {e}"
+        return None, f"❌ Error: {e}"
 
 # =========================
 # RSI
@@ -85,63 +99,30 @@ def rsi(values, period=14):
     return 100 - (100 / (1 + rs))
 
 # =========================
-# Signal
-# =========================
-def get_signal(change, rsi_val):
-    if rsi_val is None:
-        return "❌ NO DATA"
-
-    if change < -5 and rsi_val < 30:
-        return "🟢 STRONG BUY"
-    elif change < -3:
-        return "🟢 BUY"
-    elif rsi_val < 50:
-        return "🟡 WAIT"
-    else:
-        return "⚪ NO TRADE"
-
-# =========================
 # UI
 # =========================
-coin = st.text_input("✍️ اكتب العملة (BTC / ETH / BTCUSDT)")
+coin = st.text_input("✍️ اكتب العملة (BTC / ETH / SOL)")
 
-if st.button("🚀 Analyze"):
+if st.button("🚀 Generate Candles"):
 
-    if not coin:
-        st.error("✍️ لازم تكتب عملة")
-        st.stop()
+    coin_id = coin_to_id(coin)
 
-    symbol = fix_symbol(coin)
-
-    st.write("🔎 Symbol:", symbol)
-
-    candles, status = get_candles(symbol)
+    candles, status = get_data(coin_id)
 
     st.write("Status:", status)
 
     if not candles:
-        st.error("❌ Failed to load candles")
+        st.error("❌ No data")
         st.stop()
 
-    closes = [c["close"] for c in candles]
+    df = pd.DataFrame(candles)
 
-    rsi_val = rsi(closes)
+    st.subheader("📊 Daily OHLCV Candles")
+    st.dataframe(df)
 
-    last = candles[-1]
-    prev = candles[-2]
+    # RSI
+    rsi_val = rsi(df["close"].values)
 
-    change = ((last["close"] - prev["close"]) / prev["close"]) * 100
-
-    signal = get_signal(change, rsi_val)
-
-    # =========================
-    # النتائج
-    # =========================
-    st.subheader("📊 RESULT")
-
-    st.write("عملة:", symbol)
+    st.subheader("📈 Analysis")
     st.write("RSI:", rsi_val)
-    st.write("Daily Change %:", change)
-    st.write("Signal:", signal)
-
-    st.success("✅ Done")
+    st.write("Last Close:", df["close"].iloc[-1])
